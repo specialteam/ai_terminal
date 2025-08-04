@@ -3,35 +3,40 @@ from pathlib import Path
 
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
                              QWidget, QTextEdit, QLineEdit, QPushButton, QLabel,
-                             QCheckBox, QMessageBox, QSplitter)
-from PyQt5.QtCore import Qt, pyqtSignal, QObject
+                             QCheckBox, QMessageBox, QSplitter, QInputDialog)
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QTimer
 import paramiko
 import openai
 
 ##############################################################################
-# تنظیمات اولیه
+# Config
 ##############################################################################
 LOG_FILE = Path("session_log.jsonl")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or "sk-XXX"
 openai.api_key = OPENAI_API_KEY
 
 ##############################################################################
-# کلاس انتقال سیگنال از Thread به GUI
+# Logger
+##############################################################################
+def log(kind: str, text: str):
+    with LOG_FILE.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({
+            "timestamp": datetime.datetime.utcnow().isoformat(),
+            "type": kind,
+            "text": text
+        }, ensure_ascii=False) + "\n")
+
+##############################################################################
+# SSH thread
 ##############################################################################
 class Signaller(QObject):
-    new_server_output = pyqtSignal(str)
-    new_command = pyqtSignal(str)
     connected = pyqtSignal()
     disconnected = pyqtSignal(str)
+    new_server_output = pyqtSignal(str)
 
-
-##############################################################################
-# SSH Handler در Thread جدا
-##############################################################################
 class SSHThread(threading.Thread):
     def __init__(self, host, user, pwd, port=22):
-        super().__init__()
-        self.daemon = True
+        super().__init__(daemon=True)
         self.host, self.user, self.pwd, self.port = host, user, pwd, port
         self.client = paramiko.SSHClient()
         self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -54,14 +59,11 @@ class SSHThread(threading.Thread):
 
     def _io_loop(self):
         while self.running:
-            # ارسال هر چیزی که در صف ورودی است
             while not self.in_q.empty():
                 cmd = self.in_q.get()
                 self.chan.send(cmd.encode())
-                # ذخیره دستور در log
                 log("USER_COMMAND", cmd.strip())
 
-            # خواندن خروجی سرور
             if self.chan.recv_ready():
                 data = self.chan.recv(65535).decode(errors='ignore')
                 if data:
@@ -78,21 +80,37 @@ class SSHThread(threading.Thread):
         if self.client:
             self.client.close()
 
+##############################################################################
+# AI worker
+##############################################################################
+class AIWorker(QObject):
+    finished = pyqtSignal(str, bool)   # cmd, ok?
+
+    def generate(self, prompt: str):
+        threading.Thread(target=self._run, args=(prompt,), daemon=True).start()
+
+    def _run(self, prompt: str):
+        try:
+            system_prompt = (
+                "You are a Linux shell assistant. "
+                "Convert the user's natural language request into a single safe shell command. "
+                "Output **only** the raw command, no explanation."
+            )
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0
+            )
+            cmd = response["choices"][0]["message"]["content"].strip().replace("```shell","").replace("```", "")
+            self.finished.emit(cmd, True)
+        except Exception as e:
+            self.finished.emit(str(e), False)
 
 ##############################################################################
-# ثبت رویدادها در فایل JSON Lines
-##############################################################################
-def log(kind: str, text: str):
-    with LOG_FILE.open("a", encoding="utf-8") as f:
-        f.write(json.dumps({
-            "timestamp": datetime.datetime.utcnow().isoformat(),
-            "type": kind,
-            "text": text
-        }, ensure_ascii=False) + "\n")
-
-
-##############################################################################
-# پنجره اصلی
+# Main window
 ##############################################################################
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -100,7 +118,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("AI Terminal Assistant")
         self.resize(1000, 700)
         self.ssh_thread = None
+        self.ai_worker = AIWorker()
         self.init_ui()
+        self.connect_ssh()
 
     def init_ui(self):
         central = QWidget()
@@ -110,14 +130,14 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Vertical)
         vbox.addWidget(splitter)
 
-        # ناحیه لاگ
+        # log
         self.log_widget = QTextEdit()
         self.log_widget.setReadOnly(True)
         splitter.addWidget(self.log_widget)
 
-        # ناحیه AI
-        self.ai_group = QWidget()
-        ai_layout = QVBoxLayout(self.ai_group)
+        # ai zone
+        ai_group = QWidget()
+        ai_layout = QVBoxLayout(ai_group)
         ai_layout.addWidget(QLabel("AI Mode (Describe what you want):"))
         self.ai_input = QLineEdit()
         self.ai_input.setPlaceholderText("e.g. list all files larger than 100MB in /var/log")
@@ -138,9 +158,9 @@ class MainWindow(QMainWindow):
         self.ai_confirm = QPushButton("Send to Server")
         self.ai_confirm.setEnabled(False)
         ai_layout.addWidget(self.ai_confirm)
-        splitter.addWidget(self.ai_group)
+        splitter.addWidget(ai_group)
 
-        # خط فرمان عادی
+        # normal command line
         cmd_layout = QHBoxLayout()
         self.cmd_input = QLineEdit()
         self.cmd_input.setEnabled(False)
@@ -151,17 +171,14 @@ class MainWindow(QMainWindow):
         cmd_layout.addWidget(self.send_btn)
         vbox.addLayout(cmd_layout)
 
-        # اتصال سیگنال‌ها
+        # signals
         self.ai_btn.clicked.connect(self.handle_ai_generate)
         self.ai_confirm.clicked.connect(self.handle_ai_confirm)
         self.send_btn.clicked.connect(self.handle_send)
         self.cmd_input.returnPressed.connect(self.handle_send)
-
-        # اتصال اولیه
-        self.connect_ssh()
+        self.ai_worker.finished.connect(self.on_ai_done)
 
     def connect_ssh(self):
-        # می‌توان پنجره لاگین ساخت، اینجا ساده ساخته می‌شود
         host = "localhost"
         user = "root"
         pwd, ok = QInputDialog.getText(self, "SSH Login", "Password:", QLineEdit.Password)
@@ -170,12 +187,12 @@ class MainWindow(QMainWindow):
         port = 22
         self.append_log("Connecting to {}@{} ...".format(user, host))
         self.ssh_thread = SSHThread(host, user, pwd, port)
-        self.ssh_thread.signaller.new_server_output.connect(self.on_server_output)
         self.ssh_thread.signaller.connected.connect(self.on_connected)
         self.ssh_thread.signaller.disconnected.connect(self.on_disconnected)
+        self.ssh_thread.signaller.new_server_output.connect(self.append_log)
         self.ssh_thread.start()
 
-    # ---------- GUI Slots ----------
+    # ---------- slots ----------
     def on_connected(self):
         self.append_log("Connected.")
         self.cmd_input.setEnabled(True)
@@ -184,13 +201,9 @@ class MainWindow(QMainWindow):
     def on_disconnected(self, msg):
         self.append_log("Disconnected: " + msg)
 
-    def on_server_output(self, text):
-        self.append_log(text, user=False)
-
-    def append_log(self, text, user=True):
-        self.log_widget.moveCursor(self.log_widget.textCursor().End)
-        self.log_widget.insertPlainText(text)
-        self.log_widget.moveCursor(self.log_widget.textCursor().End)
+    def append_log(self, text):
+        # always run in GUI thread
+        QTimer.singleShot(0, lambda: self.log_widget.insertPlainText(text))
 
     def handle_send(self):
         cmd = self.cmd_input.text()
@@ -205,31 +218,16 @@ class MainWindow(QMainWindow):
             return
         self.ai_btn.setEnabled(False)
         self.ai_suggestion.clear()
-        threading.Thread(target=self._async_ai_generate, args=(prompt,), daemon=True).start()
+        self.ai_worker.generate(prompt)
 
-    def _async_ai_generate(self, prompt):
-        try:
-            system_prompt = (
-                "You are a Linux shell assistant. "
-                "Convert the user's natural language request into a single safe shell command. "
-                "Output **only** the raw command, no explanation."
-            )
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0
-            )
-            cmd = response["choices"][0]["message"]["content"].strip()
-            self.ai_suggestion.setPlainText(cmd)
+    def on_ai_done(self, result, ok):
+        if ok:
+            self.ai_suggestion.setPlainText(result)
             self.ai_confirm.setEnabled(True)
-        except Exception as e:
-            self.ai_suggestion.setPlainText("Error: " + str(e))
+        else:
+            self.ai_suggestion.setPlainText("Error: " + result)
             self.ai_confirm.setEnabled(False)
-        finally:
-            self.ai_btn.setEnabled(True)
+        self.ai_btn.setEnabled(True)
 
     def handle_ai_confirm(self):
         cmd = self.ai_suggestion.toPlainText().strip()
@@ -244,9 +242,8 @@ class MainWindow(QMainWindow):
             self.ssh_thread.close()
         event.accept()
 
-
 ##############################################################################
-# اجرای برنامه
+# Run
 ##############################################################################
 if __name__ == "__main__":
     app = QApplication(sys.argv)
