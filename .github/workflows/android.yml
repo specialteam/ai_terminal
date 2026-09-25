@@ -42,10 +42,21 @@ jobs:
           name: ai-terminal-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
 
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.release_tag }}" ]; then
+            echo "name=${{ inputs.release_tag }}" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "name=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          elif [ "$GITHUB_REF" = "refs/heads/main" ] && [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            echo "name=v$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts)" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
+        if: steps.tag.outputs.name != ''
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          tag_name: ${{ steps.tag.outputs.name }}
           target_commitish: ${{ github.sha }}
           files: android/app/build/outputs/apk/debug/*.apk
