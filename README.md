@@ -61,3 +61,9 @@ Extending / Roadmap
 License
 -------
 MIT – do whatever you want.
+
+Android App
+-----------
+A native Kotlin port lives in `android/`. GitHub Actions (`.github/workflows/android.yml`) builds it on every push that touches `android/`:
+download the APK from the workflow run's **Artifacts**, or push a `v*` tag to publish it on the **Releases** page.
+Enter host, user, password and (optionally) your OpenAI key on the login screen; tick **AI Mode** to turn a description into a command, then tap the suggestion to run it.
