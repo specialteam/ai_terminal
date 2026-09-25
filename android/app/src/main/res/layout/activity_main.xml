@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="8dp">
+
+    <LinearLayout
+        android:id="@+id/loginPanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <EditText
+                android:id="@+id/hostInput"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="3"
+                android:hint="Host"
+                android:inputType="textUri" />
+            <EditText
+                android:id="@+id/portInput"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:hint="Port"
+                android:inputType="number"
+                android:text="22" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <EditText
+                android:id="@+id/userInput"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:hint="User"
+                android:inputType="text" />
+            <EditText
+                android:id="@+id/passInput"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:hint="Password"
+                android:inputType="textPassword" />
+        </LinearLayout>
+
+        <EditText
+            android:id="@+id/apiKeyInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="OpenAI API key (for AI mode)"
+            android:inputType="textPassword" />
+
+        <Button
+            android:id="@+id/connectBtn"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Connect" />
+    </LinearLayout>
+
+    <ScrollView
+        android:id="@+id/outputScroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#000000">
+        <TextView
+            android:id="@+id/outputView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:padding="4dp"
+            android:textColor="#33FF33"
+            android:textIsSelectable="true"
+            android:textSize="12sp" />
+    </ScrollView>
+
+    <CheckBox
+        android:id="@+id/aiMode"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="AI Mode" />
+
+    <TextView
+        android:id="@+id/aiSuggestion"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:fontFamily="monospace"
+        android:padding="4dp"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+        <EditText
+            android:id="@+id/cmdInput"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:enabled="false"
+            android:fontFamily="monospace"
+            android:hint="Command"
+            android:imeOptions="actionSend"
+            android:inputType="text" />
+        <Button
+            android:id="@+id/sendBtn"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:enabled="false"
+            android:text="Send" />
+    </LinearLayout>
+</LinearLayout>
